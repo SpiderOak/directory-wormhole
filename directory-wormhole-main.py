@@ -18,99 +18,60 @@ It uses these command line arguments:
  --collection name_of_nimbus.io_collection
  --archive-name-prefix prefix to prepend to the filename to upload
 """
-import argparse
 import logging
-import logging.handlers
 import sys
+from threading import Event
 
-class CommandlineError(Exception):
-    pass
+from signal_handler import set_signal_handler
+from log_setup import initialize_stderr_logging, initialize_file_logging
+from commandline import parse_commandline, CommandlineError
+from inotify_setup import create_notifier, InotifyError
 
-_max_log_size = 16 * 1024 * 1024
-_max_log_backup_files = 1000
-_log_format_template = "%(asctime)s %(levelname)-8s %(name)-20s: %(message)s"
-_program_description = "directory wormhole" 
-
-def _initialize_stderr_logging():
-    """
-    log errors to stderr
-    """                                                   
-    log_level = logging.WARN                                                    
-    handler = logging.StreamHandler(stream=sys.stderr)                          
-    formatter = logging.Formatter(_log_format_template)                         
-    handler.setFormatter(formatter)                                             
-    handler.setLevel(log_level)                                                 
-    logging.root.addHandler(handler)                      
-
-    logging.root.setLevel(log_level)
-
-def _initialize_file_logging(log_path, verbose):
-    """
-    initialize the permanent log
-    """
-    log_level = (logging.DEBUG if verbose else logging.INFO)
-
-    handler = logging.handlers.RotatingFileHandler(
-        log_path,
-        mode="a", 
-        maxBytes=_max_log_size,
-        backupCount=_max_log_backup_files,
-        encoding="utf-8"
-    )
-    formatter = logging.Formatter(_log_format_template)
-    handler.setFormatter(formatter)
-
-    logging.root.addHandler(handler)
-    logging.root.setLevel(log_level)
-
-def _parse_commandline():
-    """
-    organize program arguments
-    """
-    parser = argparse.ArgumentParser(description=_program_description)
-    parser.add_argument("-l", "--log", dest="log_path", help="/path/to/logfile")
-    parser.add_argument("-w", "--watch", dest="watch_path",  
-                       help="/path/to/wormhole/directory") 
-    parser.add_argument("-p", "--pattern", dest="pattern", default="*", 
-                       help="glob pattern to watch for;for example, *.complete")
-    parser.add_argument("-i", "--identity", dest="identity",
-                       help="/path/to/motoboto_identity")
-    parser.add_argument("-c", "--collection", dest="collection",
-                       help="name_of_nimbus.io_collection")
-    parser.add_argument("-a", "--archive-name-prefix", dest="prefix", default="",
-                       help="prefix to prepend to the filename to upload")
-    parser.add_argument("-v", "--verbose", action="store_true", default=False)
-
-    args = parser.parse_args()
-
-    if args.log_path is None:
-        parser.print_help()
-        raise CommandlineError("You must specify a log path")
-
-    if args.watch_path is None:
-        parser.print_help()
-        raise CommandlineError("You must specify a directory to watch")
-
-    return args
+def _event_handler(inotify_event):
+    log = logging.getLogger("_event_handler")
+    log.info("{0}".format(inotify_event))
 
 def main():
     """
     main entry point
     """
-    _initialize_stderr_logging()
+    initialize_stderr_logging()
     log = logging.getLogger("main")
 
     try:
-        args = _parse_commandline()
+        args = parse_commandline()
     except CommandlineError as instance:
         log.error("invalid commandline {0}".format(instance))
         return 1
 
-    _initialize_file_logging(args.log_path, args.verbose)
+    initialize_file_logging(args.log_path, args.verbose)
 
-    log.info("program starts")
-    log.info("program terminates normally")
-    return 0
+    halt_event = Event()
+    set_signal_handler(halt_event)
+
+    try:
+        notifier = create_notifier(args.watch_path, _event_handler)
+    except InotifyError as instance:
+        log.error("Unable to initialize inotify: {0}".format(instance))
+
+    log.info("main loop starts")
+    return_code = 0
+    while not halt_event.is_set():
+
+        try:
+            if notifier.check_events(timeout=10000):
+                notifier.read_events()
+                notifier.process_events()
+        except Exception as instance:
+            log.exception(instance)
+            return_code = 1
+            halt_event.set()
+
+    log.info("main loop ends")
+    notifier.stop()
+
+    log.info("program terminates return_code = {0}".format(return_code))
+    return return_code
 
 if __name__ == "__main__":
     sys.exit(main())
