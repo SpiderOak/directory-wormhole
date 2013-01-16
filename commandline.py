@@ -19,11 +19,11 @@ def parse_commandline():
     parser.add_argument("-l", "--log", dest="log_path", help="/path/to/logfile")
     parser.add_argument("-w", "--watch", dest="watch_path",  
                        help="/path/to/wormhole/directory") 
-    parser.add_argument("-p", "--pattern", dest="pattern", default="*", 
+    parser.add_argument("-p", "--pattern", dest="pattern", 
                        help="glob pattern to watch for;for example, *.complete")
-    parser.add_argument("-i", "--identity", dest="identity",
+    parser.add_argument("-i", "--identity", dest="identity_path",
                        help="/path/to/motoboto_identity")
-    parser.add_argument("-c", "--collection", dest="collection",
+    parser.add_argument("-c", "--collection", dest="collection_name",
                        help="name_of_nimbus.io_collection")
     parser.add_argument("-a", "--archive-name-prefix", dest="prefix", default="",
                        help="prefix to prepend to the filename to upload")
